@@ -1,10 +1,11 @@
+import os
 import threading
 import queue
 import time
 import random
 import sys
-import os
 import re
+import tempfile
 from flask import Flask, render_template, Response, request, jsonify
 import requests
 from bs4 import BeautifulSoup
@@ -32,94 +33,11 @@ TEST = {
     "test_name": "11th-jee-ct-pt-1"
 }
 
-# Users list
+# Users list – add your full list here
 USERS = [
     {"user": "26173000217", "name": "TANISHA RATHORE"},
     {"user": "26173000190", "name": "MEET KAUSHIK"},
-    {"user": "26173000201", "name": "ANUJ YADAV"},
-    {"user": "26173000210", "name": "DAKSH"},
-    {"user": "26173000184", "name": "YATHARTH"},
-    {"user": "26173000191", "name": "CHIRAG YADAV"},
-    {"user": "26173000237", "name": "DIKSHA"},
-    {"user": "26173000200", "name": "DIVYA YADAV"},
-    {"user": "26173000205", "name": "DARSHIL YADAV"},
-    {"user": "26173000225", "name": "ABHISHEK"},
-    {"user": "26173000289", "name": "DISHANT"},
-    {"user": "26173000193", "name": "KAVYANSHU"},
-    {"user": "26173000177", "name": "MAYANK"},
-    {"user": "26173000213", "name": "AARAV THAKRAN"},
-    {"user": "26173000449", "name": "JESSICA"},
-    {"user": "26173000189", "name": "HIMANSHU MUDGIL"},
-    {"user": "26173000186", "name": "ABHI"},
-    {"user": "26173000196", "name": "DHRUVIKA"},
-    {"user": "26173000286", "name": "JANVI VASHISTH"},
-    {"user": "26173000450", "name": "BABY"},
-    {"user": "26173000206", "name": "RUPESH YADAV"},
-    {"user": "26173000207", "name": "AYUSH TIWARI"},
-    {"user": "26173000227", "name": "DEEPIKA ALWARIA"},
-    {"user": "26173000215", "name": "ANSHIKA YADAV"},
-    {"user": "26173000269", "name": "DEV RAJ KUMAR"},
-    {"user": "26173000259", "name": "SHIVAM KUMAR"},
-    {"user": "26173000285", "name": "KANIKA YADAV"},
-    {"user": "26173000002", "name": "AKSHITA YADAV"},
-    {"user": "26173000260", "name": "SHUBHAM KUMAR"},
-    {"user": "26173000219", "name": "DEEPANSHU YADAV"},
-    {"user": "26173000216", "name": "RONAK SAMBHARIA"},
-    {"user": "26173000199", "name": "CHIRAG KUMAR"},
-    {"user": "26173000287", "name": "VANSH GAUR"},
-    {"user": "26173000204", "name": "ISHU THAKRAN"},
-    {"user": "26173000226", "name": "RIYA"},
-    {"user": "26173000448", "name": "SUHANI BHAMASRA"},
-    {"user": "26173000283", "name": "RISHABH"},
-    {"user": "26173000214", "name": "AYUSH YADAV"},
-    {"user": "26173000505", "name": "LAKSHITA"},
-    {"user": "26173000809", "name": "LAKSHAY"},
-    {"user": "26173000209", "name": "HARSH"},
-    {"user": "26173000278", "name": "LAKSHAY"},
-    {"user": "26173000255", "name": "PRINCE"},
-    {"user": "26173000179", "name": "DAKSH"},
-    {"user": "26173000223", "name": "CHHAVI"},
-    {"user": "26173000804", "name": "DAKSH YADAV"},
-    {"user": "26173000292", "name": "VAIBHAV"},
-    {"user": "26173000198", "name": "GRISHIKA YADAV"},
-    {"user": "26173000187", "name": "AMANDEEP"},
-    {"user": "26173000291", "name": "BHAVESH"},
-    {"user": "26173000182", "name": "JAYANT YADAV"},
-    {"user": "26173000228", "name": "NIKITA YADAV"},
-    {"user": "26173000221", "name": "PRATYKSH YADAV"},
-    {"user": "26173000277", "name": "SAIJIYA"},
-    {"user": "26173000211", "name": "ANSHU"},
-    {"user": "26173000488", "name": "PARTEEK SINGH"},
-    {"user": "26173000477", "name": "NITIN"},
-    {"user": "26173000183", "name": "NILESH VASHISTHA"},
-    {"user": "26173000478", "name": "SOMAY"},
-    {"user": "26173000195", "name": "AAKANSHA"},
-    {"user": "26173000486", "name": "TARUN"},
-    {"user": "26173000224", "name": "JATIN KUMAR"},
-    {"user": "26173000452", "name": "SHOURYA DABAS"},
-    {"user": "26173000220", "name": "DHRUV CHAUHAN"},
-    {"user": "26173000212", "name": "MAYANK"},
-    {"user": "26173000815", "name": "SUMIT"},
-    {"user": "26173000180", "name": "DIPANSHU"},
-    {"user": "26173000022", "name": "YASHIKA YADAV"},
-    {"user": "26173000818", "name": "KAPIL"},
-    {"user": "26173000435", "name": "TANUJ"},
-    {"user": "26173000188", "name": "VARSHA"},
-    {"user": "26173000246", "name": "MAHI"},
-    {"user": "26173000249", "name": "TANISHA"},
-    {"user": "26173000806", "name": "VANSH SONI"},
-    {"user": "26173000203", "name": "KESHAV YADAV"},
-    {"user": "26173000387", "name": "MAHAK CHAUHAN"},
-    {"user": "26173000388", "name": "NANCY"},
-    {"user": "26173000817", "name": "PRABHAT"},
-    {"user": "26173000194", "name": "RAHUL YADAV"},
-    {"user": "26173000181", "name": "SHIVANSHU KUMAR"},
-    {"user": "26173000812", "name": "TARUN"},
-    {"user": "26173000218", "name": "NAITIK CHAUHAN"},
-    {"user": "26173000241", "name": "AAYUSHI"},
-    {"user": "26173000185", "name": "ISHIKA"},
-    {"user": "26173000047", "name": "LAKSHAY VERMA"},
-    {"user": "26173000813", "name": "PARUL"}
+    # ... include all users
 ]
 
 HEADLESS = True
@@ -129,7 +47,6 @@ PROXY_LIST = []
 # -----------------------------------
 
 def log_message(msg, level="info", user=None, status=None, error=None):
-    """Send a structured log message with optional user status update."""
     entry = {
         "type": "log",
         "level": level,
@@ -146,7 +63,6 @@ def log_message(msg, level="info", user=None, status=None, error=None):
     print(f"[{entry['time']}] {msg}")
 
 def update_user_status(user_id, name, status, error=None):
-    """Update the global user status dict and send an event."""
     user_status[user_id] = {
         "name": name,
         "status": status,
@@ -303,7 +219,6 @@ def submit_user(user, name, planner, test, test_name):
 def run_bulk_job():
     global is_running
     is_running = True
-    # Initialize all users as pending
     for u in USERS:
         user_status[u["user"]] = {"name": u["name"], "status": "pending", "error": None, "time": time.strftime("%H:%M:%S")}
     log_message(f"🚀 Starting bulk submission for {len(USERS)} users")
@@ -324,7 +239,6 @@ def start_job():
     global is_running
     if is_running:
         return jsonify({"status": "already_running"}), 400
-    # Clear queue and status
     while not log_queue.empty():
         try:
             log_queue.get_nowait()
@@ -344,14 +258,13 @@ def logs():
                 msg = log_queue.get(timeout=1)
                 yield f"data: {msg}\n\n"
             except queue.Empty:
-                # keep alive
                 yield f"data: {{'heartbeat': true}}\n\n"
     return Response(stream(), mimetype="text/event-stream")
 
 @app.route('/status')
 def status():
-    # Return current user status as JSON
     return jsonify(user_status)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
