@@ -15,6 +15,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 
 app = Flask(__name__)
 
@@ -28,6 +29,7 @@ TEST = {
     "test_name": "11th-jee-ct-pt-1"
 }
 
+# Your full user list (add all users)
 # Users list
 USERS = [
     {"user": "26173000217", "name": "TANISHA RATHORE"},
@@ -202,6 +204,7 @@ def submit_user(user, name, planner, test, test_name):
                                  controls["test_id"], controls["user"], controls["exam"])
 
         chrome_options = Options()
+        # Set Chrome binary location (Render installs Chrome here)
         chrome_options.binary_location = "/usr/bin/google-chrome-stable"
         if HEADLESS:
             chrome_options.add_argument("--headless=new")
@@ -214,8 +217,8 @@ def submit_user(user, name, planner, test, test_name):
             proxy = random.choice(PROXY_LIST)
             chrome_options.add_argument(f"--proxy-server={proxy}")
 
-        # Use system chromedriver
-        service = Service("/usr/local/bin/chromedriver")
+        # Use webdriver-manager to automatically download and use the correct driver
+        service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.set_page_load_timeout(30)
         wait = WebDriverWait(driver, 30)
@@ -238,13 +241,11 @@ def submit_user(user, name, planner, test, test_name):
         """
         driver.execute_script("document.write(arguments[0])", html)
 
-        # Wait for container with timeout
         wait.until(EC.presence_of_element_located((By.ID, "container")))
         log_message(f"✅ Test page loaded for {name}", user=user)
 
         if AUTO_SUBMIT:
             try:
-                # Remove modal if present
                 try:
                     modal = driver.find_element(By.ID, "fullscreenmodal")
                     if modal.is_displayed():
