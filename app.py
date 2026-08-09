@@ -41,8 +41,9 @@ TEST = {
     "test_name": "11th-jee-ct-pt-1"
 }
 
+# ---------- Default User List (replace with your full list) ----------
 # Users list
-USERS = [
+DEFAULT_USERS = [
     {"user": "26173000217", "name": "TANISHA RATHORE"},
     {"user": "26173000190", "name": "MEET KAUSHIK"},
     {"user": "26173000201", "name": "ANUJ YADAV"},
@@ -131,11 +132,6 @@ USERS = [
     {"user": "26173000813", "name": "PARUL"}
 ]
 
-HEADLESS = True
-AUTO_SUBMIT = True
-USE_PROXIES = False
-PROXY_LIST = []
-
 # ---------- Helpers ----------
 def log_message(msg, level="info", user=None, status=None, error=None):
     entry = {"type": "log", "level": level, "message": msg, "time": time.strftime("%H:%M:%S")}
@@ -146,13 +142,11 @@ def log_message(msg, level="info", user=None, status=None, error=None):
     print(f"[{entry['time']}] {msg}")
 
 def update_user_status(user_id, name, status, error=None):
-    # Update in DB
     jobs_collection.update_one(
         {"_id": "current"},
         {"$set": {f"results.{user_id}": {"name": name, "status": status, "error": error, "time": time.strftime("%H:%M:%S")}}},
         upsert=True
     )
-    # Also send to queue for live updates
     log_queue.put({
         "type": "status_update",
         "user_id": user_id,
@@ -169,7 +163,6 @@ def get_job_status():
     return doc
 
 def initialize_users():
-    # Store user list in DB if not exists
     if not users_collection.find_one({"_id": "list"}):
         users_collection.insert_one({"_id": "list", "users": DEFAULT_USERS})
     return users_collection.find_one({"_id": "list"})["users"]
@@ -242,7 +235,7 @@ def submit_user(user, name, planner, test, test_name):
         log_message(f"✅ Test page loaded for {name}", user=user)
 
         if AUTO_SUBMIT:
-            # First, try to remove any modal overlays
+            # Remove modal overlay
             try:
                 modal = driver.find_element(By.ID, "fullscreenmodal")
                 if modal.is_displayed():
@@ -251,19 +244,17 @@ def submit_user(user, name, planner, test, test_name):
             except:
                 pass
 
-            # Try to find and click Submit button
+            # Find Submit button
             submit_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(text(),'Submit')]")))
-            # Scroll into view
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", submit_btn)
             time.sleep(0.5)
-            # Click with JavaScript as fallback
             try:
                 submit_btn.click()
             except:
                 driver.execute_script("arguments[0].click();", submit_btn)
             log_message(f"🔘 Submit clicked for {name}", user=user)
 
-            # Check for confirmation modal
+            # Confirm modal
             try:
                 finish_btn = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//button[contains(text(),'Finish Test')]")))
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", finish_btn)
@@ -297,26 +288,22 @@ def run_bulk_job():
             return
         is_running = True
     try:
-        # Ensure user list exists
         users = initialize_users()
-        # Get starting index
         start_index = get_next_user_index()
         total = len(users)
         log_message(f"🚀 Resuming bulk submission from user {start_index+1}/{total}")
 
-        # Mark job as running
         mark_job_running()
 
         for i in range(start_index, total):
             u = users[i]
-            # Save current index before processing
             save_current_index(i)
             submit_user(u["user"], u["name"], TEST["planner"], TEST["test"], TEST["test_name"])
-            # After each user, save progress
             save_current_index(i+1)
 
         mark_job_completed()
-        success = sum(1 for s in jobs_collection.find_one({"_id": "current"}).get("results", {}).values() if s.get("status") == "success")
+        doc = jobs_collection.find_one({"_id": "current"})
+        success = sum(1 for s in doc.get("results", {}).values() if s.get("status") == "success")
         log_message(f"✅ Bulk job finished. Success: {success}/{total}")
     except Exception as e:
         log_message(f"❌ Job crashed: {e}", level="error")
@@ -324,7 +311,7 @@ def run_bulk_job():
         with job_lock:
             is_running = False
 
-# ---------- API functions (unchanged) ----------
+# ---------- API functions ----------
 def get_test_controls(user, planner, test, name, test_name):
     session = requests.Session()
     session.headers.update({
@@ -392,19 +379,12 @@ def index():
 def start_job():
     global is_running
     with job_lock:
-        # Check if a job is already running (from DB)
         doc = jobs_collection.find_one({"_id": "current"})
         if doc and doc.get("status") == "running":
             return jsonify({"status": "already_running"}), 400
-        # If there's a completed job, we can clear it or resume? We'll start fresh.
-        # But if we want to resume, we should not clear.
-        # We'll just start a new thread.
         if is_running:
             return jsonify({"status": "already_running"}), 400
-        # Clear any previous incomplete job (optional)
-        # jobs_collection.delete_one({"_id": "current"})
-        # But we want to resume, so we don't delete.
-        # Ensure the job document exists with initial state
+        # Ensure we have a job document (to store results and index)
         jobs_collection.update_one(
             {"_id": "current"},
             {"$set": {"status": "running", "current_index": 0, "results": {}}},
@@ -431,7 +411,6 @@ def status():
     doc = jobs_collection.find_one({"_id": "current"})
     if not doc:
         return jsonify({})
-    # Return the results dict
     return jsonify(doc.get("results", {}))
 
 @app.route('/check')
