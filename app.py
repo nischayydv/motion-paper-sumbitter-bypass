@@ -15,7 +15,6 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 
 app = Flask(__name__)
 
@@ -203,14 +202,9 @@ def submit_user(user, name, planner, test, test_name):
                                  controls["test_id"], controls["user"], controls["exam"])
 
         chrome_options = Options()
-        chrome_options.binary_location = "/usr/bin/google-chrome-stable"  # <-- ADDED
+        chrome_options.binary_location = "/usr/bin/google-chrome-stable"
         if HEADLESS:
             chrome_options.add_argument("--headless=new")
-        temp_profile = os.path.join(tempfile.gettempdir(), f"motion_bulk_{random.randint(1000,9999)}")
-        if not os.path.exists(temp_profile):
-            os.makedirs(temp_profile)
-        chrome_options.add_argument(f"--user-data-dir={temp_profile}")
-        chrome_options.add_argument("--incognito")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
@@ -220,8 +214,10 @@ def submit_user(user, name, planner, test, test_name):
             proxy = random.choice(PROXY_LIST)
             chrome_options.add_argument(f"--proxy-server={proxy}")
 
-        service = Service(ChromeDriverManager().install())
+        # Use system chromedriver
+        service = Service("/usr/local/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver.set_page_load_timeout(30)
         wait = WebDriverWait(driver, 30)
 
         driver.get("about:blank")
@@ -242,30 +238,36 @@ def submit_user(user, name, planner, test, test_name):
         """
         driver.execute_script("document.write(arguments[0])", html)
 
+        # Wait for container with timeout
         wait.until(EC.presence_of_element_located((By.ID, "container")))
         log_message(f"✅ Test page loaded for {name}", user=user)
 
         if AUTO_SUBMIT:
             try:
-                modal = driver.find_element(By.ID, "fullscreenmodal")
-                if modal.is_displayed():
-                    driver.execute_script("document.getElementById('fullscreenmodal').remove();")
-                    time.sleep(1)
-            except:
-                pass
+                # Remove modal if present
+                try:
+                    modal = driver.find_element(By.ID, "fullscreenmodal")
+                    if modal.is_displayed():
+                        driver.execute_script("document.getElementById('fullscreenmodal').remove();")
+                        time.sleep(1)
+                except:
+                    pass
 
-            submit_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Submit')]")))
-            submit_btn.click()
-            log_message(f"🔘 Submit clicked for {name}", user=user)
+                submit_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Submit')]")))
+                submit_btn.click()
+                log_message(f"🔘 Submit clicked for {name}", user=user)
 
-            try:
-                finish_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Finish Test')]")))
-                finish_btn.click()
-                log_message(f"✅ Test submitted successfully for {name}", user=user)
-                update_user_status(user, name, "success")
-            except:
-                log_message(f"ℹ️ No confirmation modal for {name} – may still be submitted", user=user)
-                update_user_status(user, name, "success")
+                try:
+                    finish_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Finish Test')]")))
+                    finish_btn.click()
+                    log_message(f"✅ Test submitted successfully for {name}", user=user)
+                    update_user_status(user, name, "success")
+                except:
+                    log_message(f"ℹ️ No confirmation modal for {name} – may still be submitted", user=user)
+                    update_user_status(user, name, "success")
+            except Exception as e:
+                log_message(f"⚠️ Auto-submit failed for {name}: {e}", level="warning", user=user)
+                update_user_status(user, name, "failed", error=str(e))
         else:
             update_user_status(user, name, "opened")
 
