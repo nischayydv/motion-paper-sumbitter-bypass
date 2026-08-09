@@ -1,207 +1,291 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Motion Bulk Submitter</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motion Bulk Test Submitter</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <style>
-        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        h1 { color: #333; }
-        .btn { background: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 4px; font-size: 16px; cursor: pointer; }
-        .btn-danger { background: #dc3545; }
-        .btn:disabled { background: #aaa; cursor: not-allowed; }
-        .stats { margin: 10px 0; }
-        .stats span { margin-right: 20px; }
-        .flex { display: flex; gap: 20px; }
-        .status-table { flex: 1; max-height: 500px; overflow-y: auto; background: white; padding: 10px; border-radius: 4px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        .status-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        .status-table th { background: #f0f0f0; text-align: left; padding: 8px; position: sticky; top: 0; z-index: 1; }
-        .status-table td { padding: 6px 8px; border-bottom: 1px solid #eee; }
-        .status-badge { padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
-        .status-pending { background: #e2e3e5; color: #383d41; }
-        .status-processing { background: #cce5ff; color: #004085; }
-        .status-success { background: #d4edda; color: #155724; }
-        .status-failed { background: #f8d7da; color: #721c24; }
-        .status-opened { background: #fff3cd; color: #856404; }
-        .log-box { flex: 1; background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 4px; height: 500px; overflow-y: auto; font-family: monospace; font-size: 13px; white-space: pre-wrap; }
-        .log-entry { border-bottom: 1px solid #333; padding: 4px 0; }
-        .time { color: #888; }
-        .info { color: #6f9; }
-        .error { color: #f66; }
-        .success { color: #6f9; }
-        .warning { color: #fd6; }
-        .progress-bar { width: 100%; height: 20px; background: #e9ecef; border-radius: 10px; overflow: hidden; margin: 10px 0; }
-        .progress-fill { height: 100%; background: #28a745; transition: width 0.3s; }
-        .button-group { display: flex; gap: 10px; align-items: center; }
+        body { background-color: #f4f6f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .header-title { font-weight: 700; color: #1a252f; }
+        .card-custom { border: none; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .table-container { max-height: 600px; overflow-y: auto; background: #ffffff; border-radius: 8px; }
+        .table sticky-header th { position: sticky; top: 0; background-color: #f8f9fa; z-index: 10; }
+        .log-terminal { background-color: #121212; color: #00ff66; font-family: 'Courier New', Courier, monospace; height: 600px; overflow-y: auto; padding: 15px; border-radius: 8px; font-size: 0.88rem; }
+        .log-entry { margin-bottom: 5px; border-bottom: 1px solid #222; padding-bottom: 3px; word-wrap: break-word; }
+        .log-error { color: #ff4d4d; }
+        .log-warning { color: #ffcc00; }
+        .badge-status { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; padding: 5px 10px; border-radius: 4px; }
+        .badge-idle { background-color: #e9ecef; color: #495057; }
+        .badge-processing { background-color: #cff4fc; color: #055160; animation: pulse 1.5s infinite; }
+        .badge-success { background-color: #d1e7dd; color: #0f5132; }
+        .badge-failed { background-color: #f8d7da; color: #842029; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
     </style>
 </head>
-<body>
-<div class="container">
-    <h1>📊 Motion Bulk Test Submitter</h1>
-    <div class="button-group">
-        <button id="startBtn" class="btn">▶ Start Bulk Submission</button>
-        <button id="resetBtn" class="btn btn-danger">🗑 Reset Job</button>
-    </div>
-    <div class="stats" id="stats">
-        <span>Total: <b id="totalCount">0</b></span>
-        <span>✅ Success: <b id="successCount">0</b></span>
-        <span>❌ Failed: <b id="failedCount">0</b></span>
-        <span>⏳ Processing: <b id="processingCount">0</b></span>
-    </div>
-    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
-    <div class="flex">
-        <div class="status-table">
-            <table>
-                <thead><tr><th>User ID</th><th>Name</th><th>Status</th><th>Time</th><th>Error</th></tr></thead>
-                <tbody id="statusBody"></tbody>
-            </table>
+<body class="p-4">
+
+<div class="container-fluid">
+    <!-- Title Bar -->
+    <div class="d-flex align-items-center mb-4">
+        <div class="p-2 bg-primary text-white rounded me-3 fs-3">📊</div>
+        <div>
+            <h2 class="header-title mb-0">Motion Bulk Test Submitter</h2>
+            <small class="text-muted">Automated & Manual Test Processing Dashboard</small>
         </div>
-        <div class="log-box" id="logContainer"></div>
+    </div>
+
+    <!-- Action Bar & Controls -->
+    <div class="card card-custom p-3 mb-4">
+        <div class="row align-items-center g-3">
+            <div class="col-md-6 d-flex gap-2">
+                <button id="startBtn" class="btn btn-primary btn-lg fw-semibold" onclick="startBulk()">
+                    <i class="bi bi-play-fill me-1"></i> Start Bulk Submission
+                </button>
+                <button class="btn btn-outline-success btn-lg fw-semibold" data-bs-toggle="modal" data-bs-target="#addStudentModal">
+                    <i class="bi bi-person-plus-fill me-1"></i> Add Student
+                </button>
+                <button class="btn btn-danger btn-lg fw-semibold" onclick="resetJob()">
+                    <i class="bi bi-trash-fill me-1"></i> Reset Job
+                </button>
+            </div>
+            <div class="col-md-6 text-md-end fs-6 fw-bold">
+                <span class="me-3">Total: <span id="statTotal" class="badge bg-secondary">0</span></span>
+                <span class="me-3">✅ Success: <span id="statSuccess" class="badge bg-success">0</span></span>
+                <span class="me-3">❌ Failed: <span id="statFailed" class="badge bg-danger">0</span></span>
+                <span class="me-3">⏳ Processing: <span id="statProcessing" class="badge bg-info text-dark">0</span></span>
+                <span>💤 Idle: <span id="statIdle" class="badge bg-light text-dark border">0</span></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="row g-4">
+        <!-- Student Table -->
+        <div class="col-lg-7">
+            <div class="card card-custom p-3">
+                <h5 class="fw-bold mb-3"><i class="bi bi-people-fill me-2 text-primary"></i>Student Queue</h5>
+                <div class="table-container border">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light sticky-header">
+                            <tr>
+                                <th>User ID</th>
+                                <th>Name</th>
+                                <th>Status</th>
+                                <th>Time</th>
+                                <th class="text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="studentTableBody">
+                            <tr>
+                                <td colspan="5" class="text-center py-4 text-muted">Loading student data...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Execution Logs -->
+        <div class="col-lg-5">
+            <div class="card card-custom p-3">
+                <h5 class="fw-bold mb-3"><i class="bi bi-terminal-fill me-2 text-dark"></i>Live Execution Log</h5>
+                <div id="logConsole" class="log-terminal">
+                    <div class="log-entry log-info">[SYSTEM] Connected to server event stream. Waiting for job start...</div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
+
+<!-- Modal: Add Student -->
+<div class="modal fade" id="addStudentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="bi bi-person-add me-2"></i>Add New Student</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label font-semibold">User / Roll Number ID</label>
+                    <input type="text" id="newUserId" class="form-control" placeholder="e.g. 26173000999">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label font-semibold">Full Name</label>
+                    <input type="text" id="newUserName" class="form-control" placeholder="e.g. RAHUL SHARMA">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="addStudent()">Add Student</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    const startBtn = document.getElementById('startBtn');
-    const resetBtn = document.getElementById('resetBtn');
-    const statusBody = document.getElementById('statusBody');
-    const logContainer = document.getElementById('logContainer');
-    const totalCount = document.getElementById('totalCount');
-    const successCount = document.getElementById('successCount');
-    const failedCount = document.getElementById('failedCount');
-    const processingCount = document.getElementById('processingCount');
-    const progressFill = document.getElementById('progressFill');
+    let isProcessingJob = false;
 
-    let eventSource = null;
+    // Stream Live Logs via EventSource (SSE)
+    const evtSource = new EventSource("/logs");
+    evtSource.onmessage = function(event) {
+        if (!event.data) return;
+        const data = JSON.parse(event.data);
+        const consoleElem = document.getElementById("logConsole");
+        
+        let cssClass = "log-info";
+        if (data.level === "error") cssClass = "log-error";
+        if (data.level === "warning") cssClass = "log-warning";
 
-    const statusClass = {
-        'pending': 'status-pending',
-        'processing': 'status-processing',
-        'success': 'status-success',
-        'failed': 'status-failed',
-        'opened': 'status-opened'
+        const entry = document.createElement("div");
+        entry.className = `log-entry ${cssClass}`;
+        entry.innerText = `[${data.time}] ${data.message}`;
+        consoleElem.appendChild(entry);
+        consoleElem.scrollTop = consoleElem.scrollHeight;
+
+        // Automatically refresh table when log comes in
+        fetchStatus();
     };
 
-    function updateStatusTable(data) {
-        let html = '';
-        let total = 0, success = 0, failed = 0, processing = 0;
-        for (const [userId, info] of Object.entries(data)) {
-            total++;
-            if (info.status === 'success') success++;
-            else if (info.status === 'failed') failed++;
-            else if (info.status === 'processing') processing++;
-            const cls = statusClass[info.status] || '';
-            html += `<tr>
-                <td>${userId}</td>
-                <td>${info.name}</td>
-                <td><span class="status-badge ${cls}">${info.status.toUpperCase()}</span></td>
-                <td>${info.time || ''}</td>
-                <td style="color:red;font-size:12px;">${info.error || ''}</td>
-            </tr>`;
-        }
-        statusBody.innerHTML = html;
-        totalCount.textContent = total;
-        successCount.textContent = success;
-        failedCount.textContent = failed;
-        processingCount.textContent = processing;
-        const progress = total > 0 ? (success + failed) / total * 100 : 0;
-        progressFill.style.width = progress + '%';
-    }
+    // Fetch Table & Statistics
+    async function fetchStatus() {
+        try {
+            const res = await fetch('/status');
+            const results = await res.json();
+            const tbody = document.getElementById('studentTableBody');
+            
+            let total = 0, success = 0, failed = 0, processing = 0, idle = 0;
+            let rowsHtml = '';
 
-    function addLog(level, message, time) {
-        const entry = document.createElement('div');
-        entry.className = 'log-entry';
-        const color = level === 'error' ? 'error' : level === 'success' ? 'success' : level === 'warning' ? 'warning' : 'info';
-        entry.innerHTML = `<span class="time">[${time}]</span> <span class="${color}">${message}</span>`;
-        logContainer.appendChild(entry);
-        logContainer.scrollTop = logContainer.scrollHeight;
-    }
+            const userKeys = Object.keys(results);
+            total = userKeys.length;
 
-    function startEventSource() {
-        if (eventSource) {
-            eventSource.close();
-        }
-        eventSource = new EventSource('/logs');
-        eventSource.onmessage = function(event) {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.heartbeat) return;
-                if (data.type === 'status_update') {
-                    fetchStatus();
-                    if (data.status) {
-                        const msg = `${data.name} (${data.user_id}) → ${data.status}`;
-                        addLog(data.status === 'success' ? 'success' : data.status === 'failed' ? 'error' : 'info', msg, data.time);
-                    }
-                } else if (data.type === 'log') {
-                    addLog(data.level, data.message, data.time);
-                } else {
-                    addLog('info', event.data, '');
-                }
-            } catch(e) {
-                addLog('info', event.data, '');
+            if (total === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-muted">No students found</td></tr>';
+                return;
             }
-        };
-        eventSource.onerror = function() {
-            console.log('SSE connection lost, reconnecting...');
-            setTimeout(() => {
-                if (eventSource.readyState === EventSource.CLOSED) {
-                    startEventSource();
-                }
-            }, 3000);
-        };
+
+            userKeys.forEach(userId => {
+                const item = results[userId];
+                const status = item.status || 'idle';
+                
+                if (status === 'success') success++;
+                else if (status === 'failed') failed++;
+                else if (status === 'processing') processing++;
+                else idle++;
+
+                let badgeClass = 'badge-idle';
+                if (status === 'success') badgeClass = 'badge-success';
+                if (status === 'failed') badgeClass = 'badge-failed';
+                if (status === 'processing') badgeClass = 'badge-processing';
+
+                rowsHtml += `
+                    <tr>
+                        <td class="fw-bold text-secondary">${userId}</td>
+                        <td class="fw-semibold">${item.name}</td>
+                        <td><span class="badge-status ${badgeClass}">${status}</span></td>
+                        <td class="small text-muted">${item.time || '--'}</td>
+                        <td class="text-center">
+                            <button id="btn-${userId}" class="btn btn-sm btn-outline-primary" 
+                                    onclick="submitSingle('${userId}')" ${status === 'processing' ? 'disabled' : ''}>
+                                <i class="bi bi-send-fill me-1"></i> Submit
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            tbody.innerHTML = rowsHtml;
+
+            // Update Statistics Badges
+            document.getElementById('statTotal').innerText = total;
+            document.getElementById('statSuccess').innerText = success;
+            document.getElementById('statFailed').innerText = failed;
+            document.getElementById('statProcessing').innerText = processing;
+            document.getElementById('statIdle').innerText = idle;
+
+        } catch (err) {
+            console.error("Error fetching status:", err);
+        }
     }
 
-    function fetchStatus() {
-        fetch('/status')
-            .then(res => res.json())
-            .then(data => updateStatusTable(data))
-            .catch(err => console.error('Status fetch error:', err));
+    // Start Bulk Job
+    async function startBulk() {
+        const btn = document.getElementById('startBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Running Bulk...';
+        
+        await fetch('/start', { method: 'POST' });
+        fetchStatus();
     }
 
-    startBtn.addEventListener('click', function() {
-        startBtn.disabled = true;
-        fetch('/start', { method: 'POST' })
-            .then(res => res.json())
-            .then(data => {
-                if (data.status === 'started') {
-                    logContainer.innerHTML = '';
-                    statusBody.innerHTML = '';
-                    fetchStatus();
-                    startEventSource();
-                } else if (data.status === 'already_running') {
-                    alert('Job already running.');
-                } else {
-                    alert('Failed to start.');
-                }
-            })
-            .catch(err => alert('Error starting job.'))
-            .finally(() => startBtn.disabled = false);
-    });
+    // Submit Single Student Manually
+    async function submitSingle(userId) {
+        const btn = document.getElementById(`btn-${userId}`);
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        }
 
-    resetBtn.addEventListener('click', function() {
-        if (!confirm('Reset job? This will clear all progress and start fresh.')) return;
-        fetch('/reset', { method: 'POST' })
-            .then(res => res.json())
-            .then(data => {
-                if (data.status === 'reset') {
-                    logContainer.innerHTML = '';
-                    statusBody.innerHTML = '';
-                    if (eventSource) {
-                        eventSource.close();
-                        eventSource = null;
-                    }
-                    fetchStatus();
-                    alert('Job reset successfully.');
-                } else if (data.status === 'cannot_reset') {
-                    alert(data.message);
-                } else {
-                    alert('Reset failed.');
-                }
-            })
-            .catch(err => alert('Error resetting job.'));
-    });
+        await fetch('/submit_single', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: userId })
+        });
 
-    // Initial load
+        setTimeout(fetchStatus, 800);
+    }
+
+    // Add New Student
+    async function addStudent() {
+        const userId = document.getElementById('newUserId').value.trim();
+        const name = document.getElementById('newUserName').value.trim();
+
+        if (!userId || !name) {
+            alert("Please enter both User ID and Student Name.");
+            return;
+        }
+
+        const res = await fetch('/add_student', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: userId, name: name })
+        });
+
+        const data = await res.json();
+        if (data.status === 'success') {
+            document.getElementById('newUserId').value = '';
+            document.getElementById('newUserName').value = '';
+            const modalElem = document.getElementById('addStudentModal');
+            const modal = bootstrap.Modal.getInstance(modalElem);
+            modal.hide();
+            fetchStatus();
+        } else {
+            alert(data.message || "Failed to add student.");
+        }
+    }
+
+    // Reset Job State
+    async function resetJob() {
+        if (!confirm("Are you sure you want to reset all statuses to idle?")) return;
+        
+        await fetch('/reset', { method: 'POST' });
+        document.getElementById('logConsole').innerHTML = '<div class="log-entry log-info">[SYSTEM] Job state reset to idle.</div>';
+        
+        const btn = document.getElementById('startBtn');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-fill me-1"></i> Start Bulk Submission';
+        
+        fetchStatus();
+    }
+
+    // Initial load & periodic background refresh
     fetchStatus();
-    // Automatically connect to logs for live updates if any job is running
-    startEventSource();
+    setInterval(fetchStatus, 3000);
 </script>
+
 </body>
 </html>
