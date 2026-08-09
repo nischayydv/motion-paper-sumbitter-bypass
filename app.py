@@ -22,7 +22,7 @@ TEST = {
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://nischay419:nischay419@cluster0.z6hynou.mongodb.net/?appName=Cluster0")
 try:
     client = MongoClient(MONGO_URI)
-    db = client["motion_bulk"]
+    db = client["motion"]
     jobs_collection = db["jobs"]
     users_collection = db["users"]
     mongo_available = True
