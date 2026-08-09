@@ -2,24 +2,21 @@ import os
 import threading
 import queue
 import time
-import random
-import sys
 import re
-import tempfile
-import subprocess
+import concurrent.futures
 from flask import Flask, render_template, Response, request, jsonify
 import requests
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 from pymongo import MongoClient
 
 app = Flask(__name__)
+
+# ---------- Global Test Configuration ----------
+TEST = {
+    "planner": "241",
+    "test": "66665557929",
+    "test_name": "11th-jee-ct-pt-1"
+}
 
 # ---------- MongoDB Setup ----------
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://nischay419:nischay419@cluster0.z6hynou.mongodb.net/?appName=Cluster0")
@@ -37,7 +34,7 @@ except Exception as e:
     job_data = {"_id": "current", "status": "idle", "current_index": 0, "results": {}}
     user_list = []
 
-# ---------- On startup: reset stuck jobs ----------
+# ---------- Startup Clean-up ----------
 def reset_stuck_jobs():
     if mongo_available:
         doc = jobs_collection.find_one({"_id": "current"})
@@ -141,7 +138,7 @@ DEFAULT_USERS = [
     {"user": "26173000813", "name": "PARUL"}
 ]
 
-# ---------- Helper functions ----------
+# ---------- Helper Functions ----------
 def get_users():
     if mongo_available:
         doc = users_collection.find_one({"_id": "list"})
@@ -190,115 +187,112 @@ def log_message(msg, level="info", user=None, status=None, error=None):
     log_queue.put(entry)
     print(f"[{entry['time']}] {msg}")
 
-# ---------- Selenium submission ----------
-HEADLESS = True
-AUTO_SUBMIT = True
-USE_PROXIES = False
-PROXY_LIST = []
+# ---------- API Extractor Functions ----------
+def get_test_controls(session, user, planner, test, name, test_name):
+    url = "https://onlinetestseries.motion.ac.in/dashboard/secure/api/getTestControls.php"
+    data = {"user": user, "planner": planner, "test": test, "name": name, "test_name": test_name}
+    resp = session.post(url, data=data, timeout=10)
+    resp.raise_for_status()
+    json_resp = resp.json()
+    
+    if json_resp.get("error") != 0:
+        raise Exception(f"API Error: {json_resp.get('msg')}")
+        
+    soup = BeautifulSoup(json_resp.get("data", ""), "html.parser")
+    form = soup.find("form")
+    hidden = {}
+    if form:
+        for inp in form.find_all("input", type="hidden"):
+            name_attr = inp.get("name")
+            value_attr = inp.get("value")
+            if name_attr and value_attr is not None:
+                hidden[name_attr] = value_attr
+    return hidden
 
-def get_test_controls(user, planner, test, name, test_name):
-    # ... same as before
-    pass
+def get_secure_form(session, user_token, planner, test_id, user, exam):
+    url = "https://onlinetestseries.motion.ac.in/dashboard/secure/"
+    data = {
+        "user_token": user_token,
+        "planner": planner,
+        "test_id": test_id,
+        "user": user,
+        "exam": exam,
+        "form_starttest": ""
+    }
+    resp = session.post(url, data=data, timeout=10)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    form = soup.find("form", action=re.compile(r"test-landing/index\.php"))
+    hidden = {}
+    if form:
+        for inp in form.find_all("input", type="hidden"):
+            name_attr = inp.get("name")
+            value_attr = inp.get("value")
+            if name_attr and value_attr is not None:
+                hidden[name_attr] = value_attr
+    return hidden
 
-def get_secure_form(user_token, planner, test_id, user, exam):
-    # ... same as before
-    pass
-
-def submit_user(user, name, planner, test, test_name):
+# ---------- Fast Concurrent API Submission ----------
+def submit_user_api(user_info, planner, test_id, test_name):
+    user = user_info["user"]
+    name = user_info["name"]
     update_user_status(user, name, "processing")
-    driver = None
+    
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://onlinetestseries.motion.ac.in/dashboard/student-dashboard.php",
+        "X-Requested-With": "XMLHttpRequest"
+    })
+
     try:
-        log_message(f"▶️ Processing: {name} ({user})", user=user)
-        controls = get_test_controls(user, planner, test, name, test_name)
-        secure = get_secure_form(controls["user_token"], controls["planner"],
-                                 controls["test_id"], controls["user"], controls["exam"])
+        log_message(f"▶️ Fast API submission: {name} ({user})", user=user)
 
-        chrome_options = Options()
-        chrome_options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/google-chrome-stable")
-        if HEADLESS:
-            chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--remote-debugging-port=9222")
-        chrome_options.add_argument("--window-size=1920,1080")
-        if USE_PROXIES and PROXY_LIST:
-            proxy = random.choice(PROXY_LIST)
-            chrome_options.add_argument(f"--proxy-server={proxy}")
+        # Step 1: Call getTestControls.php
+        controls = get_test_controls(session, user, planner, test_id, name, test_name)
+        user_token = controls.get("user_token")
+        if not user_token:
+            raise Exception("Could not extract user_token from getTestControls.php")
 
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        driver.set_page_load_timeout(30)
-        wait = WebDriverWait(driver, 30)
+        # Step 2: Call secure form verification
+        secure_data = get_secure_form(
+            session,
+            user_token,
+            controls.get("planner", planner),
+            controls.get("test_id", test_id),
+            controls.get("user", user),
+            controls.get("exam", test_name)
+        )
 
-        driver.get("about:blank")
-        html = f"""
-        <html>
-        <body onload="document.forms[0].submit()">
-            <form method="POST" action="https://onlinetestseries.motion.ac.in/dashboard/secure/test-landing/index.php">
-        """
-        for key, value in secure.items():
-            html += f'<input type="hidden" name="{key}" value="{value}" />\n'
-        html += """
-            </form>
-            <script>
-                setTimeout(function() { document.forms[0].submit(); }, 100);
-            </script>
-        </body>
-        </html>
-        """
-        driver.execute_script("document.write(arguments[0])", html)
+        # Step 3: Initialize landing session
+        landing_url = "https://onlinetestseries.motion.ac.in/dashboard/secure/test-landing/index.php"
+        resp_landing = session.post(landing_url, data=secure_data, timeout=10)
+        resp_landing.raise_for_status()
 
-        wait.until(EC.presence_of_element_located((By.ID, "container")))
-        log_message(f"✅ Test page loaded for {name}", user=user)
+        # Step 4: Direct test completion submission
+        submit_url = "https://onlinetestseries.motion.ac.in/dashboard/secure/test-landing/submit_test.php"
+        submit_payload = {
+            "user": user,
+            "test_id": test_id,
+            "user_token": user_token,
+            "status": "completed"
+        }
+        res_submit = session.post(submit_url, data=submit_payload, timeout=10)
 
-        if AUTO_SUBMIT:
-            try:
-                modal = driver.find_element(By.ID, "fullscreenmodal")
-                if modal.is_displayed():
-                    driver.execute_script("document.getElementById('fullscreenmodal').remove();")
-                    time.sleep(1)
-            except:
-                pass
-
-            submit_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(text(),'Submit')]")))
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", submit_btn)
-            time.sleep(0.5)
-            try:
-                submit_btn.click()
-            except:
-                driver.execute_script("arguments[0].click();", submit_btn)
-            log_message(f"🔘 Submit clicked for {name}", user=user)
-
-            try:
-                finish_btn = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//button[contains(text(),'Finish Test')]")))
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", finish_btn)
-                time.sleep(0.5)
-                try:
-                    finish_btn.click()
-                except:
-                    driver.execute_script("arguments[0].click();", finish_btn)
-                log_message(f"✅ Test submitted successfully for {name}", user=user)
-                update_user_status(user, name, "success")
-            except:
-                log_message(f"ℹ️ No confirmation modal for {name} – may still be submitted", user=user)
-                update_user_status(user, name, "success")
+        if res_submit.status_code == 200:
+            log_message(f"✅ Submitted successfully via API for {name}", user=user)
+            update_user_status(user, name, "success")
         else:
-            update_user_status(user, name, "opened")
+            raise Exception(f"HTTP Error {res_submit.status_code}")
 
-        driver.quit()
-        driver = None
-        time.sleep(random.randint(2, 5))
     except Exception as e:
         log_message(f"❌ Error for {user} ({name}): {e}", level="error", user=user)
         update_user_status(user, name, "failed", error=str(e))
-    finally:
-        if driver:
-            driver.quit()
 
-# ---------- Job runner ----------
+# ---------- Concurrent Job Runner ----------
 is_running = False
 job_lock = threading.Lock()
+MAX_WORKERS = 10  # Run 10 requests in parallel
 
 def run_bulk_job():
     global is_running
@@ -310,20 +304,31 @@ def run_bulk_job():
         users = get_users()
         doc = get_job_doc()
         start_index = doc.get("current_index", 0)
+        remaining_users = users[start_index:]
         total = len(users)
-        log_message(f"🚀 Resuming bulk submission from user {start_index+1}/{total}")
 
+        log_message(f"🚀 Launching fast API bulk job ({len(remaining_users)} users remaining using {MAX_WORKERS} threads)")
         update_job_doc({"status": "running"})
 
-        for i in range(start_index, total):
-            u = users[i]
-            update_job_doc({"current_index": i})
-            submit_user(u["user"], u["name"], TEST["planner"], TEST["test"], TEST["test_name"])
-            update_job_doc({"current_index": i+1})
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(
+                    submit_user_api, 
+                    u, 
+                    TEST["planner"], 
+                    TEST["test"], 
+                    TEST["test_name"]
+                ): idx for idx, u in enumerate(remaining_users, start=start_index)
+            }
+
+            for future in concurrent.futures.as_completed(futures):
+                idx = futures[future]
+                update_job_doc({"current_index": idx + 1})
 
         update_job_doc({"status": "completed"})
         success = sum(1 for r in get_job_doc().get("results", {}).values() if r.get("status") == "success")
         log_message(f"✅ Bulk job finished. Success: {success}/{total}")
+
     except Exception as e:
         log_message(f"❌ Job crashed: {e}", level="error")
     finally:
@@ -343,7 +348,6 @@ def start_job():
             return jsonify({"status": "already_running"}), 400
         doc = get_job_doc()
         if doc.get("status") == "running":
-            # If it says running but no thread is alive, reset it
             update_job_doc({"status": "idle"})
         thread = threading.Thread(target=run_bulk_job)
         thread.daemon = True
@@ -364,11 +368,11 @@ def reset_job():
             job_data["status"] = "idle"
             job_data["current_index"] = 0
             job_data["results"] = {}
-        # Clear log queue
+        
         while not log_queue.empty():
             try:
                 log_queue.get_nowait()
-            except:
+            except queue.Empty:
                 break
         return jsonify({"status": "reset"})
 
@@ -395,13 +399,11 @@ def job_state():
 
 @app.route('/check')
 def check():
-    try:
-        result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True)
-        chrome_version = result.stdout.strip()
-        driver_path = ChromeDriverManager().install()
-        return f"✅ Chrome version: {chrome_version}<br>✅ ChromeDriver path: {driver_path}"
-    except Exception as e:
-        return f"❌ Error: {e}"
+    return jsonify({
+        "mongo_status": mongo_available,
+        "max_workers": MAX_WORKERS,
+        "engine": "Concurrent Direct HTTP API Engine"
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
