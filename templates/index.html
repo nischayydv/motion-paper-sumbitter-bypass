@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Motion Bulk Submitter</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { color: #333; }
+        .btn { background: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 4px; font-size: 16px; cursor: pointer; }
+        .btn:disabled { background: #aaa; cursor: not-allowed; }
+        .stats { margin: 10px 0; }
+        .stats span { margin-right: 20px; }
+        .flex { display: flex; gap: 20px; }
+        .status-table { flex: 1; max-height: 500px; overflow-y: auto; background: white; padding: 10px; border-radius: 4px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .status-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .status-table th { background: #f0f0f0; text-align: left; padding: 8px; position: sticky; top: 0; z-index: 1; }
+        .status-table td { padding: 6px 8px; border-bottom: 1px solid #eee; }
+        .status-badge { padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+        .status-pending { background: #e2e3e5; color: #383d41; }
+        .status-processing { background: #cce5ff; color: #004085; }
+        .status-success { background: #d4edda; color: #155724; }
+        .status-failed { background: #f8d7da; color: #721c24; }
+        .status-opened { background: #fff3cd; color: #856404; }
+        .log-box { flex: 1; background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 4px; height: 500px; overflow-y: auto; font-family: monospace; font-size: 13px; white-space: pre-wrap; }
+        .log-entry { border-bottom: 1px solid #333; padding: 4px 0; }
+        .time { color: #888; }
+        .info { color: #6f9; }
+        .error { color: #f66; }
+        .success { color: #6f9; }
+        .warning { color: #fd6; }
+        .progress-bar { width: 100%; height: 20px; background: #e9ecef; border-radius: 10px; overflow: hidden; margin: 10px 0; }
+        .progress-fill { height: 100%; background: #28a745; transition: width 0.3s; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📊 Motion Bulk Test Submitter</h1>
+    <button id="startBtn" class="btn">▶ Start Bulk Submission</button>
+    <div class="stats" id="stats">
+        <span>Total: <b id="totalCount">0</b></span>
+        <span>✅ Success: <b id="successCount">0</b></span>
+        <span>❌ Failed: <b id="failedCount">0</b></span>
+        <span>⏳ Processing: <b id="processingCount">0</b></span>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    <div class="flex">
+        <div class="status-table">
+            <table>
+                <thead><tr><th>User ID</th><th>Name</th><th>Status</th><th>Time</th><th>Error</th></tr></thead>
+                <tbody id="statusBody"></tbody>
+            </table>
+        </div>
+        <div class="log-box" id="logContainer"></div>
+    </div>
+</div>
+<script>
+    const startBtn = document.getElementById('startBtn');
+    const statusBody = document.getElementById('statusBody');
+    const logContainer = document.getElementById('logContainer');
+    const totalCount = document.getElementById('totalCount');
+    const successCount = document.getElementById('successCount');
+    const failedCount = document.getElementById('failedCount');
+    const processingCount = document.getElementById('processingCount');
+    const progressFill = document.getElementById('progressFill');
+
+    // Status color map
+    const statusClass = {
+        'pending': 'status-pending',
+        'processing': 'status-processing',
+        'success': 'status-success',
+        'failed': 'status-failed',
+        'opened': 'status-opened'
+    };
+
+    function updateStatusTable(data) {
+        let html = '';
+        let total = 0, success = 0, failed = 0, processing = 0;
+        for (const [userId, info] of Object.entries(data)) {
+            total++;
+            if (info.status === 'success') success++;
+            else if (info.status === 'failed') failed++;
+            else if (info.status === 'processing') processing++;
+            const cls = statusClass[info.status] || '';
+            html += `<tr>
+                <td>${userId}</td>
+                <td>${info.name}</td>
+                <td><span class="status-badge ${cls}">${info.status.toUpperCase()}</span></td>
+                <td>${info.time || ''}</td>
+                <td style="color:red;font-size:12px;">${info.error || ''}</td>
+            </tr>`;
+        }
+        statusBody.innerHTML = html;
+        totalCount.textContent = total;
+        successCount.textContent = success;
+        failedCount.textContent = failed;
+        processingCount.textContent = processing;
+        const progress = total > 0 ? (success + failed) / total * 100 : 0;
+        progressFill.style.width = progress + '%';
+    }
+
+    function addLog(level, message, time) {
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+        const color = level === 'error' ? 'error' : level === 'success' ? 'success' : level === 'warning' ? 'warning' : 'info';
+        entry.innerHTML = `<span class="time">[${time}]</span> <span class="${color}">${message}</span>`;
+        logContainer.appendChild(entry);
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    function startEventSource() {
+        const eventSource = new EventSource('/logs');
+        eventSource.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.heartbeat) return;
+                if (data.type === 'status_update') {
+                    // Fetch full status update
+                    fetchStatus();
+                    // Also add a log if there's a message
+                    if (data.status) {
+                        const msg = `${data.name} (${data.user_id}) → ${data.status}`;
+                        addLog(data.status === 'success' ? 'success' : data.status === 'failed' ? 'error' : 'info', msg, data.time);
+                    }
+                } else if (data.type === 'log') {
+                    addLog(data.level, data.message, data.time);
+                } else {
+                    // fallback
+                    addLog('info', event.data, '');
+                }
+            } catch(e) {
+                // Probably plain text
+                addLog('info', event.data, '');
+            }
+        };
+        eventSource.onerror = function() {
+            console.log('SSE connection closed, reconnecting...');
+            setTimeout(() => {
+                if (eventSource.readyState === EventSource.CLOSED) {
+                    startEventSource();
+                }
+            }, 3000);
+        };
+    }
+
+    function fetchStatus() {
+        fetch('/status')
+            .then(res => res.json())
+            .then(data => updateStatusTable(data))
+            .catch(err => console.error('Status fetch error:', err));
+    }
+
+    startBtn.addEventListener('click', function() {
+        startBtn.disabled = true;
+        fetch('/start', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'started') {
+                    logContainer.innerHTML = '';
+                    // Clear status table
+                    statusBody.innerHTML = '';
+                    fetchStatus();
+                    startEventSource();
+                } else if (data.status === 'already_running') {
+                    alert('Job already running.');
+                } else {
+                    alert('Failed to start.');
+                }
+            })
+            .catch(err => alert('Error starting job.'))
+            .finally(() => startBtn.disabled = false);
+    });
+
+    // Initial load
+    fetchStatus();
+</script>
+</body>
+</html>
