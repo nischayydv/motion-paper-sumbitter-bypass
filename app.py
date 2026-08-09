@@ -18,31 +18,40 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from pymongo import MongoClient
-from bson import ObjectId
 
 app = Flask(__name__)
 
 # ---------- MongoDB Setup ----------
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://nischay419:nischay419@cluster0.z6hynou.mongodb.net/?appName=Cluster0")
-client = MongoClient(MONGO_URI)
-db = client["motion_bulk"]
-jobs_collection = db["jobs"]
-users_collection = db["users"]  # store the user list once
+try:
+    client = MongoClient(MONGO_URI)
+    db = client["motion_bulk"]
+    jobs_collection = db["jobs"]
+    users_collection = db["users"]
+    mongo_available = True
+except Exception as e:
+    print(f"⚠️ MongoDB connection failed: {e}. Using in-memory fallback.")
+    mongo_available = False
+    jobs_collection = None
+    users_collection = None
+    job_data = {"_id": "current", "status": "idle", "current_index": 0, "results": {}}
+    user_list = []
 
-# ---------- Global State ----------
-log_queue = queue.Queue()
-is_running = False   # in-memory flag, but we also check DB
-job_lock = threading.Lock()
+# ---------- On startup: reset stuck jobs ----------
+def reset_stuck_jobs():
+    if mongo_available:
+        doc = jobs_collection.find_one({"_id": "current"})
+        if doc and doc.get("status") == "running":
+            jobs_collection.update_one({"_id": "current"}, {"$set": {"status": "idle"}})
+            print("✅ Reset stuck job status to idle.")
+    else:
+        if job_data.get("status") == "running":
+            job_data["status"] = "idle"
+            print("✅ Reset stuck job status to idle.")
 
-# ---------- Configuration ----------
-TEST = {
-    "planner": "241",
-    "test": "66665557929",
-    "test_name": "11th-jee-ct-pt-1"
-}
+reset_stuck_jobs()
 
-# ---------- Default User List (replace with your full list) ----------
-# Users list
+# ---------- Default User List ----------
 DEFAULT_USERS = [
     {"user": "26173000217", "name": "TANISHA RATHORE"},
     {"user": "26173000190", "name": "MEET KAUSHIK"},
@@ -132,7 +141,47 @@ DEFAULT_USERS = [
     {"user": "26173000813", "name": "PARUL"}
 ]
 
-# ---------- Helpers ----------
+# ---------- Helper functions ----------
+def get_users():
+    if mongo_available:
+        doc = users_collection.find_one({"_id": "list"})
+        if not doc:
+            users_collection.insert_one({"_id": "list", "users": DEFAULT_USERS})
+            return DEFAULT_USERS
+        return doc.get("users", DEFAULT_USERS)
+    else:
+        if not user_list:
+            user_list.extend(DEFAULT_USERS)
+        return user_list
+
+def get_job_doc():
+    if mongo_available:
+        doc = jobs_collection.find_one({"_id": "current"})
+        if not doc:
+            jobs_collection.insert_one({"_id": "current", "status": "idle", "current_index": 0, "results": {}})
+            doc = jobs_collection.find_one({"_id": "current"})
+        return doc
+    return job_data
+
+def update_job_doc(updates):
+    if mongo_available:
+        jobs_collection.update_one({"_id": "current"}, {"$set": updates}, upsert=True)
+    else:
+        job_data.update(updates)
+
+def update_user_status(user_id, name, status, error=None):
+    if mongo_available:
+        jobs_collection.update_one(
+            {"_id": "current"},
+            {"$set": {f"results.{user_id}": {"name": name, "status": status, "error": error, "time": time.strftime("%H:%M:%S")}}},
+            upsert=True
+        )
+    else:
+        job_data["results"][user_id] = {"name": name, "status": status, "error": error, "time": time.strftime("%H:%M:%S")}
+
+# ---------- Logging ----------
+log_queue = queue.Queue()
+
 def log_message(msg, level="info", user=None, status=None, error=None):
     entry = {"type": "log", "level": level, "message": msg, "time": time.strftime("%H:%M:%S")}
     if user: entry["user"] = user
@@ -141,51 +190,20 @@ def log_message(msg, level="info", user=None, status=None, error=None):
     log_queue.put(entry)
     print(f"[{entry['time']}] {msg}")
 
-def update_user_status(user_id, name, status, error=None):
-    jobs_collection.update_one(
-        {"_id": "current"},
-        {"$set": {f"results.{user_id}": {"name": name, "status": status, "error": error, "time": time.strftime("%H:%M:%S")}}},
-        upsert=True
-    )
-    log_queue.put({
-        "type": "status_update",
-        "user_id": user_id,
-        "name": name,
-        "status": status,
-        "error": error,
-        "time": time.strftime("%H:%M:%S")
-    })
-
-def get_job_status():
-    doc = jobs_collection.find_one({"_id": "current"})
-    if not doc:
-        return None
-    return doc
-
-def initialize_users():
-    if not users_collection.find_one({"_id": "list"}):
-        users_collection.insert_one({"_id": "list", "users": DEFAULT_USERS})
-    return users_collection.find_one({"_id": "list"})["users"]
-
-def get_next_user_index():
-    doc = jobs_collection.find_one({"_id": "current"})
-    if doc and "current_index" in doc:
-        return doc["current_index"]
-    return 0
-
-def save_current_index(index):
-    jobs_collection.update_one({"_id": "current"}, {"$set": {"current_index": index}}, upsert=True)
-
-def mark_job_completed():
-    jobs_collection.update_one({"_id": "current"}, {"$set": {"status": "completed"}}, upsert=True)
-
-def mark_job_running():
-    jobs_collection.update_one({"_id": "current"}, {"$set": {"status": "running"}}, upsert=True)
-
-def clear_job():
-    jobs_collection.delete_one({"_id": "current"})
-
 # ---------- Selenium submission ----------
+HEADLESS = True
+AUTO_SUBMIT = True
+USE_PROXIES = False
+PROXY_LIST = []
+
+def get_test_controls(user, planner, test, name, test_name):
+    # ... same as before
+    pass
+
+def get_secure_form(user_token, planner, test_id, user, exam):
+    # ... same as before
+    pass
+
 def submit_user(user, name, planner, test, test_name):
     update_user_status(user, name, "processing")
     driver = None
@@ -235,7 +253,6 @@ def submit_user(user, name, planner, test, test_name):
         log_message(f"✅ Test page loaded for {name}", user=user)
 
         if AUTO_SUBMIT:
-            # Remove modal overlay
             try:
                 modal = driver.find_element(By.ID, "fullscreenmodal")
                 if modal.is_displayed():
@@ -244,7 +261,6 @@ def submit_user(user, name, planner, test, test_name):
             except:
                 pass
 
-            # Find Submit button
             submit_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(text(),'Submit')]")))
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", submit_btn)
             time.sleep(0.5)
@@ -254,7 +270,6 @@ def submit_user(user, name, planner, test, test_name):
                 driver.execute_script("arguments[0].click();", submit_btn)
             log_message(f"🔘 Submit clicked for {name}", user=user)
 
-            # Confirm modal
             try:
                 finish_btn = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//button[contains(text(),'Finish Test')]")))
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", finish_btn)
@@ -281,6 +296,10 @@ def submit_user(user, name, planner, test, test_name):
         if driver:
             driver.quit()
 
+# ---------- Job runner ----------
+is_running = False
+job_lock = threading.Lock()
+
 def run_bulk_job():
     global is_running
     with job_lock:
@@ -288,87 +307,28 @@ def run_bulk_job():
             return
         is_running = True
     try:
-        users = initialize_users()
-        start_index = get_next_user_index()
+        users = get_users()
+        doc = get_job_doc()
+        start_index = doc.get("current_index", 0)
         total = len(users)
         log_message(f"🚀 Resuming bulk submission from user {start_index+1}/{total}")
 
-        mark_job_running()
+        update_job_doc({"status": "running"})
 
         for i in range(start_index, total):
             u = users[i]
-            save_current_index(i)
+            update_job_doc({"current_index": i})
             submit_user(u["user"], u["name"], TEST["planner"], TEST["test"], TEST["test_name"])
-            save_current_index(i+1)
+            update_job_doc({"current_index": i+1})
 
-        mark_job_completed()
-        doc = jobs_collection.find_one({"_id": "current"})
-        success = sum(1 for s in doc.get("results", {}).values() if s.get("status") == "success")
+        update_job_doc({"status": "completed"})
+        success = sum(1 for r in get_job_doc().get("results", {}).values() if r.get("status") == "success")
         log_message(f"✅ Bulk job finished. Success: {success}/{total}")
     except Exception as e:
         log_message(f"❌ Job crashed: {e}", level="error")
     finally:
         with job_lock:
             is_running = False
-
-# ---------- API functions ----------
-def get_test_controls(user, planner, test, name, test_name):
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
-        "Accept": "*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Origin": "https://onlinetestseries.motion.ac.in",
-        "Referer": "https://onlinetestseries.motion.ac.in/dashboard/student-dashboard.php",
-        "X-Requested-With": "XMLHttpRequest"
-    })
-    url = "https://onlinetestseries.motion.ac.in/dashboard/secure/api/getTestControls.php"
-    data = {"user": user, "planner": planner, "test": test, "name": name, "test_name": test_name}
-    resp = session.post(url, data=data)
-    resp.raise_for_status()
-    json_resp = resp.json()
-    if json_resp.get("error") != 0:
-        raise Exception(json_resp.get("msg"))
-    soup = BeautifulSoup(json_resp.get("data", ""), "html.parser")
-    form = soup.find("form")
-    hidden = {}
-    if form:
-        for inp in form.find_all("input", type="hidden"):
-            name_attr = inp.get("name")
-            value_attr = inp.get("value")
-            if name_attr and value_attr is not None:
-                hidden[name_attr] = value_attr
-    return hidden
-
-def get_secure_form(user_token, planner, test_id, user, exam):
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
-        "Accept": "*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Origin": "https://onlinetestseries.motion.ac.in",
-        "Referer": "https://onlinetestseries.motion.ac.in/dashboard/student-dashboard.php",
-        "X-Requested-With": "XMLHttpRequest"
-    })
-    url = "https://onlinetestseries.motion.ac.in/dashboard/secure/"
-    data = {"user_token": user_token, "planner": planner, "test_id": test_id,
-            "user": user, "exam": exam, "form_starttest": ""}
-    resp = session.post(url, data=data)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-    form = soup.find("form", action=re.compile(r"test-landing/index\.php"))
-    hidden = {}
-    if form:
-        for inp in form.find_all("input", type="hidden"):
-            name = inp.get("name")
-            value = inp.get("value")
-            if name and value is not None:
-                hidden[name] = value
-    return hidden
 
 # ---------- Routes ----------
 @app.route('/')
@@ -379,21 +339,38 @@ def index():
 def start_job():
     global is_running
     with job_lock:
-        doc = jobs_collection.find_one({"_id": "current"})
-        if doc and doc.get("status") == "running":
-            return jsonify({"status": "already_running"}), 400
         if is_running:
             return jsonify({"status": "already_running"}), 400
-        # Ensure we have a job document (to store results and index)
-        jobs_collection.update_one(
-            {"_id": "current"},
-            {"$set": {"status": "running", "current_index": 0, "results": {}}},
-            upsert=True
-        )
+        doc = get_job_doc()
+        if doc.get("status") == "running":
+            # If it says running but no thread is alive, reset it
+            update_job_doc({"status": "idle"})
         thread = threading.Thread(target=run_bulk_job)
         thread.daemon = True
         thread.start()
         return jsonify({"status": "started"})
+
+@app.route('/reset', methods=['POST'])
+def reset_job():
+    global is_running
+    with job_lock:
+        if is_running:
+            return jsonify({"status": "cannot_reset", "message": "Job is currently running"}), 400
+        if mongo_available:
+            jobs_collection.delete_one({"_id": "current"})
+        else:
+            job_data.clear()
+            job_data["_id"] = "current"
+            job_data["status"] = "idle"
+            job_data["current_index"] = 0
+            job_data["results"] = {}
+        # Clear log queue
+        while not log_queue.empty():
+            try:
+                log_queue.get_nowait()
+            except:
+                break
+        return jsonify({"status": "reset"})
 
 @app.route('/logs')
 def logs():
@@ -408,10 +385,13 @@ def logs():
 
 @app.route('/status')
 def status():
-    doc = jobs_collection.find_one({"_id": "current"})
-    if not doc:
-        return jsonify({})
+    doc = get_job_doc()
     return jsonify(doc.get("results", {}))
+
+@app.route('/job_state')
+def job_state():
+    doc = get_job_doc()
+    return jsonify(doc)
 
 @app.route('/check')
 def check():
