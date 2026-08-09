@@ -5,7 +5,7 @@ import time
 import random
 import sys
 import re
-import tempfile
+import tempfile          # <--- FIXED: added this import
 from flask import Flask, render_template, Response, request, jsonify
 import requests
 from bs4 import BeautifulSoup
