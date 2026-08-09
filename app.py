@@ -5,7 +5,7 @@ import time
 import random
 import sys
 import re
-import tempfile          # <--- FIXED: added this import
+import tempfile
 from flask import Flask, render_template, Response, request, jsonify
 import requests
 from bs4 import BeautifulSoup
@@ -19,21 +19,16 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 app = Flask(__name__)
 
-# Shared queue for log messages
 log_queue = queue.Queue()
 is_running = False
+user_status = {}
 
-# Store user statuses
-user_status = {}  # user_id -> {name, status, error, start_time, end_time}
-
-# ---------- Configuration ----------
 TEST = {
     "planner": "241",
     "test": "66665557929",
     "test_name": "11th-jee-ct-pt-1"
 }
 
-# Users list – add your full list here
 # Users list
 USERS = [
     {"user": "26173000217", "name": "TANISHA RATHORE"},
@@ -128,39 +123,18 @@ HEADLESS = True
 AUTO_SUBMIT = True
 USE_PROXIES = False
 PROXY_LIST = []
-# -----------------------------------
 
 def log_message(msg, level="info", user=None, status=None, error=None):
-    entry = {
-        "type": "log",
-        "level": level,
-        "message": msg,
-        "time": time.strftime("%H:%M:%S")
-    }
-    if user:
-        entry["user"] = user
-    if status:
-        entry["status"] = status
-    if error:
-        entry["error"] = error
+    entry = {"type": "log", "level": level, "message": msg, "time": time.strftime("%H:%M:%S")}
+    if user: entry["user"] = user
+    if status: entry["status"] = status
+    if error: entry["error"] = error
     log_queue.put(entry)
     print(f"[{entry['time']}] {msg}")
 
 def update_user_status(user_id, name, status, error=None):
-    user_status[user_id] = {
-        "name": name,
-        "status": status,
-        "error": error,
-        "time": time.strftime("%H:%M:%S")
-    }
-    log_queue.put({
-        "type": "status_update",
-        "user_id": user_id,
-        "name": name,
-        "status": status,
-        "error": error,
-        "time": time.strftime("%H:%M:%S")
-    })
+    user_status[user_id] = {"name": name, "status": status, "error": error, "time": time.strftime("%H:%M:%S")}
+    log_queue.put({"type": "status_update", "user_id": user_id, "name": name, "status": status, "error": error, "time": time.strftime("%H:%M:%S")})
 
 def get_test_controls(user, planner, test, name, test_name):
     session = requests.Session()
@@ -229,6 +203,7 @@ def submit_user(user, name, planner, test, test_name):
                                  controls["test_id"], controls["user"], controls["exam"])
 
         chrome_options = Options()
+        chrome_options.binary_location = "/usr/bin/google-chrome-stable"  # <-- ADDED
         if HEADLESS:
             chrome_options.add_argument("--headless=new")
         temp_profile = os.path.join(tempfile.gettempdir(), f"motion_bulk_{random.randint(1000,9999)}")
@@ -313,7 +288,7 @@ def run_bulk_job():
     log_message(f"✅ Bulk job finished. Success: {success}/{total}")
     is_running = False
 
-# ---------- Flask Routes ----------
+# ---------- Routes ----------
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -324,10 +299,8 @@ def start_job():
     if is_running:
         return jsonify({"status": "already_running"}), 400
     while not log_queue.empty():
-        try:
-            log_queue.get_nowait()
-        except:
-            break
+        try: log_queue.get_nowait()
+        except: break
     user_status.clear()
     thread = threading.Thread(target=run_bulk_job)
     thread.daemon = True
