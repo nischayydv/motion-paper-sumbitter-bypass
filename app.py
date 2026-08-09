@@ -6,6 +6,7 @@ import random
 import sys
 import re
 import tempfile
+import subprocess
 from flask import Flask, render_template, Response, request, jsonify
 import requests
 from bs4 import BeautifulSoup
@@ -29,7 +30,6 @@ TEST = {
     "test_name": "11th-jee-ct-pt-1"
 }
 
-# Your full user list (add all users)
 # Users list
 USERS = [
     {"user": "26173000217", "name": "TANISHA RATHORE"},
@@ -204,7 +204,7 @@ def submit_user(user, name, planner, test, test_name):
                                  controls["test_id"], controls["user"], controls["exam"])
 
         chrome_options = Options()
-        # Set Chrome binary location (Render installs Chrome here)
+        # Set binary location explicitly
         chrome_options.binary_location = "/usr/bin/google-chrome-stable"
         if HEADLESS:
             chrome_options.add_argument("--headless=new")
@@ -217,7 +217,7 @@ def submit_user(user, name, planner, test, test_name):
             proxy = random.choice(PROXY_LIST)
             chrome_options.add_argument(f"--proxy-server={proxy}")
 
-        # Use webdriver-manager to automatically download and use the correct driver
+        # Use webdriver-manager to get the correct driver
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.set_page_load_timeout(30)
@@ -324,6 +324,20 @@ def logs():
 @app.route('/status')
 def status():
     return jsonify(user_status)
+
+# ---------- Check Chrome Availability ----------
+@app.route('/check')
+def check():
+    try:
+        # Check if Chrome binary exists
+        result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True)
+        chrome_version = result.stdout.strip()
+        # Also check chromedriver (using webdriver-manager installed version)
+        from webdriver_manager.chrome import ChromeDriverManager
+        driver_path = ChromeDriverManager().install()
+        return f"✅ Chrome version: {chrome_version}<br>✅ ChromeDriver path: {driver_path}"
+    except Exception as e:
+        return f"❌ Error: {e}"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
