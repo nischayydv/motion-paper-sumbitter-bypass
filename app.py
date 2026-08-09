@@ -4,11 +4,10 @@ import queue
 import time
 import re
 import json
-import tempfile
 import logging
-from flask import Flask, render_template, Response, request, jsonify
 import requests
 from bs4 import BeautifulSoup
+from flask import Flask, render_template, Response, request, jsonify
 from pymongo import MongoClient
 
 from selenium import webdriver
@@ -38,8 +37,9 @@ HEADLESS_MODE = True
 # ---------- MongoDB Setup ----------
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://nischay419:nischay419@cluster0.z6hynou.mongodb.net/?appName=Cluster0")
 try:
-    client = MongoClient(MONGO_URI)
-    db = client["motion3"]
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
+    client.server_info()
+    db = client["motion4"]
     jobs_collection = db["jobs"]
     users_collection = db["users"]
     mongo_available = True
@@ -141,7 +141,7 @@ DEFAULT_USERS = [
     {"user": "26173000813", "name": "PARUL"}
 ]
 
-# ---------- Helpers & Database Logic ----------
+# ---------- Database Helpers ----------
 def get_users():
     if mongo_available:
         doc = users_collection.find_one({"_id": "list"})
@@ -221,7 +221,7 @@ def reset_stuck_jobs():
 
 reset_stuck_jobs()
 
-# ---------- Logging ----------
+# ---------- Logging Setup ----------
 log_queue = queue.Queue()
 
 def log_message(msg, level="info", user=None, status=None, error=None):
@@ -232,91 +232,64 @@ def log_message(msg, level="info", user=None, status=None, error=None):
     log_queue.put(entry)
     print(f"[{entry['time']}] {msg}")
 
-# ---------- Optimized Motion Test Engine ----------
-class MotionTestOpener:
+# ---------- Persistent Driver Management ----------
+class PersistentBrowser:
     def __init__(self, driver_path=None):
-        self.base_url = "https://onlinetestseries.motion.ac.in"
         self.driver_path = driver_path
         self.driver = None
+        self.lock = threading.Lock()
+
+    def get_driver(self):
+        with self.lock:
+            if self.driver is None:
+                options = Options()
+                options.page_load_strategy = 'eager'  # Instant DOM access without waiting for images
+                options.add_argument("--no-sandbox")
+                options.add_argument("--disable-dev-shm-usage")
+                options.add_argument("--disable-gpu")
+                options.add_argument("--single-process") # Fits within Render 512MB RAM
+                options.add_argument("--disable-extensions")
+                options.add_argument("--window-size=800,600")
+                options.add_argument("--blink-settings=imagesEnabled=false")
+
+                if HEADLESS_MODE:
+                    options.add_argument("--headless=new")
+
+                options.add_argument("--log-level=3")
+                options.add_experimental_option("excludeSwitches", ["enable-logging"])
+
+                service = Service(self.driver_path) if self.driver_path else Service()
+                self.driver = webdriver.Chrome(service=service, options=options)
+                self.driver.set_page_load_timeout(8)
+                self.driver.implicitly_wait(1)
+            return self.driver
+
+    def quit(self):
+        with self.lock:
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except Exception:
+                    pass
+                self.driver = None
+
+shared_browser = PersistentBrowser(CHROMEDRIVER_PATH)
+
+# ---------- Optimized Test Engine ----------
+class FastMotionOpener:
+    def __init__(self, driver=None):
+        self.base_url = "https://onlinetestseries.motion.ac.in"
+        self.driver = driver or shared_browser.get_driver()
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
             "Origin": self.base_url,
             "Referer": f"{self.base_url}/dashboard/student-dashboard.php",
             "X-Requested-With": "XMLHttpRequest"
         })
 
-    def _start_chrome(self):
-        if self.driver is not None:
-            return self.driver
-
-        chrome_options = Options()
-        temp_profile = os.path.join(tempfile.gettempdir(), f"motion_chrome_{time.time()}")
-        chrome_options.add_argument(f"--user-data-dir={temp_profile}")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--blink-settings=imagesEnabled=false")  # Fast loading
-
-        if HEADLESS_MODE:
-            chrome_options.add_argument("--headless=new")
-
-        chrome_options.add_argument("--log-level=3")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
-
-        service = Service(self.driver_path) if self.driver_path else Service()
-        self.driver = webdriver.Chrome(service=service, options=chrome_options)
-        self.driver.set_page_load_timeout(25)
-        self.driver.implicitly_wait(3)
-        return self.driver
-
-    def get_test_controls(self, user, planner, test, name, test_name):
-        url = f"{self.base_url}/dashboard/secure/api/getTestControls.php"
-        data = {"user": user, "planner": planner, "test": test, "name": name, "test_name": test_name}
-        resp = self.session.post(url, data=data, timeout=12)
-        resp.raise_for_status()
-        json_resp = resp.json()
-        if json_resp.get("error") != 0:
-            raise Exception(f"API Error: {json_resp.get('msg')}")
-        soup = BeautifulSoup(json_resp.get("data", ""), "html.parser")
-        form = soup.find("form")
-        hidden = {}
-        if form:
-            for inp in form.find_all("input", type="hidden"):
-                name_attr = inp.get("name")
-                value_attr = inp.get("value")
-                if name_attr and value_attr is not None:
-                    hidden[name_attr] = value_attr
-        return hidden
-
-    def get_secure_form(self, user_token, planner, test_id, user, exam):
-        url = f"{self.base_url}/dashboard/secure/"
-        data = {"user_token": user_token, "planner": planner, "test_id": test_id,
-                "user": user, "exam": exam, "form_starttest": ""}
-        resp = self.session.post(url, data=data, timeout=12)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-        form = soup.find("form", action=re.compile(r"test-landing/index\.php"))
-        hidden = {}
-        if form:
-            for inp in form.find_all("input", type="hidden"):
-                name = inp.get("name")
-                value = inp.get("value")
-                if name and value is not None:
-                    hidden[name] = value
-        return hidden
-
-    def _handle_fullscreen_modal(self, wait):
-        try:
-            modal = wait.until(EC.presence_of_element_located((By.ID, "fullscreenmodal")))
-            self.driver.execute_script("document.getElementById('fullscreenmodal').remove();")
-        except Exception:
-            pass
-
-    def process_user_test(self, user_info, planner, test_id, test_name, retries=2):
+    def process_user(self, user_info, planner, test_id, test_name, retries=2):
         user = user_info["user"]
         name = user_info["name"]
         update_user_status(user, name, "processing")
@@ -324,76 +297,82 @@ class MotionTestOpener:
 
         for attempt in range(1, retries + 1):
             try:
-                controls = self.get_test_controls(user, planner, test_id, name, test_name)
-                secure = self.get_secure_form(
-                    controls["user_token"], controls["planner"],
-                    controls["test_id"], controls["user"], controls["exam"]
+                # Fast API Calls
+                c_resp = self.session.post(
+                    f"{self.base_url}/dashboard/secure/api/getTestControls.php",
+                    data={"user": user, "planner": planner, "test": test_id, "name": name, "test_name": test_name},
+                    timeout=6
+                ).json()
+
+                if c_resp.get("error") != 0:
+                    raise Exception(f"API Error: {c_resp.get('msg')}")
+
+                soup_c = BeautifulSoup(c_resp.get("data", ""), "html.parser")
+                c_data = {inp.get("name"): inp.get("value") for inp in soup_c.find_all("input", type="hidden")}
+
+                s_resp = self.session.post(
+                    f"{self.base_url}/dashboard/secure/",
+                    data={
+                        "user_token": c_data["user_token"],
+                        "planner": c_data["planner"],
+                        "test_id": c_data["test_id"],
+                        "user": c_data["user"],
+                        "exam": c_data["exam"],
+                        "form_starttest": ""
+                    },
+                    timeout=6
                 )
 
-                driver = self._start_chrome()
-                wait = WebDriverWait(driver, 15)
+                soup_s = BeautifulSoup(s_resp.text, "html.parser")
+                form_inputs = {
+                    inp.get("name"): inp.get("value")
+                    for inp in soup_s.find_all("input", type="hidden")
+                    if inp.get("name") and inp.get("value") is not None
+                }
 
-                driver.get("about:blank")
-                html = f"""
-                <html>
-                <body onload="document.forms[0].submit()">
-                    <form method="POST" action="{self.base_url}/dashboard/secure/test-landing/index.php">
-                """
-                for key, value in secure.items():
-                    html += f'<input type="hidden" name="{key}" value="{value}" />\n'
-                html += """
-                    </form>
-                </body>
-                </html>
-                """
-                driver.execute_script("document.write(arguments[0])", html)
+                # Browser DOM Injection
+                self.driver.get("about:blank")
+                html = f"""<html><body onload="document.forms[0].submit()">
+                <form method="POST" action="{self.base_url}/dashboard/secure/test-landing/index.php">"""
+                for k, v in form_inputs.items():
+                    html += f'<input type="hidden" name="{k}" value="{v}" />\n'
+                html += "</form></body></html>"
+
+                self.driver.execute_script("document.write(arguments[0])", html)
+
+                # Remove obstruction modal instantly
+                self.driver.execute_script("""
+                    var modal = document.getElementById('fullscreenmodal');
+                    if(modal) modal.remove();
+                """)
+
+                # Fast Submission Click
+                wait = WebDriverWait(self.driver, 4)
+                submit_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Submit')]")))
+                self.driver.execute_script("arguments[0].click();", submit_btn)
 
                 try:
-                    wait.until(EC.presence_of_element_located((By.ID, "container")))
+                    finish_btn = WebDriverWait(self.driver, 2).until(
+                        EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Finish Test')]"))
+                    )
+                    self.driver.execute_script("arguments[0].click();", finish_btn)
                 except Exception:
                     pass
 
-                self._handle_fullscreen_modal(wait)
-
-                if AUTO_SUBMIT:
-                    submit_btn = wait.until(
-                        EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Submit')]"))
-                    )
-                    driver.execute_script("arguments[0].click();", submit_btn)
-
-                    try:
-                        finish_btn = WebDriverWait(driver, 4).until(
-                            EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Finish Test')]"))
-                        )
-                        driver.execute_script("arguments[0].click();", finish_btn)
-                    except Exception:
-                        pass
-
-                log_message(f"✅ Successfully submitted: {name}", user=user)
+                log_message(f"✅ Submitted in ~2s: {name}", user=user)
                 update_user_status(user, name, "success")
                 return True
 
             except Exception as e:
                 if attempt < retries:
-                    log_message(f"⚠️ Retry {attempt}/{retries} for {name}: {e}", level="warning", user=user)
-                    self.quit()
-                    time.sleep(1)
+                    log_message(f"⚠️ Fast retry {attempt}/{retries} for {name}...", level="warning", user=user)
+                    time.sleep(0.5)
                 else:
                     log_message(f"❌ Failed for {user} ({name}): {e}", level="error", user=user)
                     update_user_status(user, name, "failed", error=str(e))
                     return False
-            finally:
-                self.quit()
 
-    def quit(self):
-        if self.driver:
-            try:
-                self.driver.quit()
-            except Exception:
-                pass
-            self.driver = None
-
-# ---------- Bulk Runner Job ----------
+# ---------- Bulk Execution Runner ----------
 is_running = False
 job_lock = threading.Lock()
 
@@ -404,20 +383,20 @@ def run_bulk_job():
             return
         is_running = True
 
-    opener = MotionTestOpener(CHROMEDRIVER_PATH)
+    opener = FastMotionOpener()
     try:
         users = get_users()
         doc = get_job_doc()
         start_index = doc.get("current_index", 0)
         remaining_users = users[start_index:]
 
-        log_message(f"🚀 Starting Bulk Submission from index {start_index} ({len(remaining_users)} left)")
+        log_message(f"🚀 Starting Fast Bulk Submission from index {start_index} ({len(remaining_users)} left)")
         update_job_doc({"status": "running"})
 
         for idx, user_info in enumerate(remaining_users, start=start_index):
             if not is_running:
                 break
-            opener.process_user_test(
+            opener.process_user(
                 user_info,
                 TEST["planner"],
                 TEST["test"],
@@ -426,16 +405,15 @@ def run_bulk_job():
             update_job_doc({"current_index": idx + 1})
 
         update_job_doc({"status": "completed"})
-        log_message(f"✅ Bulk job sequence completed.")
+        log_message("✅ Bulk job sequence completed.")
 
     except Exception as e:
         log_message(f"❌ Job error: {e}", level="error")
     finally:
-        opener.quit()
         with job_lock:
             is_running = False
 
-# ---------- Endpoints ----------
+# ---------- Flask API Endpoints ----------
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -458,19 +436,16 @@ def start_job():
 def submit_single():
     data = request.get_json() or {}
     user_id = str(data.get("user", "")).strip()
-    
+
     users = get_users()
     user_info = next((u for u in users if u["user"] == user_id), None)
-    
+
     if not user_info:
         return jsonify({"status": "error", "message": "User ID not found"}), 404
 
     def run_single():
-        opener = MotionTestOpener(CHROMEDRIVER_PATH)
-        try:
-            opener.process_user_test(user_info, TEST["planner"], TEST["test"], TEST["test_name"])
-        finally:
-            opener.quit()
+        opener = FastMotionOpener()
+        opener.process_user(user_info, TEST["planner"], TEST["test"], TEST["test_name"])
 
     threading.Thread(target=run_single, daemon=True).start()
     return jsonify({"status": "queued", "user": user_id})
@@ -489,13 +464,13 @@ def add_student():
         return jsonify({"status": "error", "message": "Student ID already exists"}), 400
 
     users.append({"user": user_id, "name": name})
-    
+
     if mongo_available:
         users_collection.update_one({"_id": "list"}, {"$set": {"users": users}}, upsert=True)
-    
+
     update_user_status(user_id, name, "idle")
     log_message(f"➕ Added new student: {name} ({user_id})")
-    
+
     return jsonify({"status": "success", "user": user_id, "name": name})
 
 @app.route('/reset', methods=['POST'])
@@ -504,7 +479,7 @@ def reset_job():
     with job_lock:
         if is_running:
             return jsonify({"status": "cannot_reset", "message": "Job is currently running"}), 400
-        
+
         initial_results = create_initial_user_results()
         if mongo_available:
             jobs_collection.update_one(
