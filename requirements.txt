@@ -1,6 +1,6 @@
-Flask==2.2.3
+Flask>=3.0.0
 requests
 beautifulsoup4
 selenium
 webdriver-manager
-Werkzeug==2.2.3
+gunicorn
