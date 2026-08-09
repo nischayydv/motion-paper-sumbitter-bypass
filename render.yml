@@ -10,14 +10,8 @@ services:
       echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list
       apt-get update
       apt-get install -y google-chrome-stable
-      # Install ChromeDriver matching the installed Chrome version
-      CHROME_VERSION=$(google-chrome --version | awk '{print $3}')
-      CHROME_MAJOR_VERSION=$(echo $CHROME_VERSION | cut -d. -f1)
-      CHROME_DRIVER_VERSION=$(curl -sS "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_MAJOR_VERSION")
-      wget -N "https://chromedriver.storage.googleapis.com/$CHROME_DRIVER_VERSION/chromedriver_linux64.zip"
-      unzip chromedriver_linux64.zip
-      chmod +x chromedriver
-      mv chromedriver /usr/local/bin/
+      # Install ChromeDriver using webdriver-manager at runtime? Better to install manually.
+      # We'll let webdriver-manager handle it, but we still need Chrome.
       pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
