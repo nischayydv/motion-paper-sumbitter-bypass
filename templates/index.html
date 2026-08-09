@@ -7,6 +7,7 @@
         .container { max-width: 1200px; margin: 0 auto; }
         h1 { color: #333; }
         .btn { background: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 4px; font-size: 16px; cursor: pointer; }
+        .btn-danger { background: #dc3545; }
         .btn:disabled { background: #aaa; cursor: not-allowed; }
         .stats { margin: 10px 0; }
         .stats span { margin-right: 20px; }
@@ -30,12 +31,16 @@
         .warning { color: #fd6; }
         .progress-bar { width: 100%; height: 20px; background: #e9ecef; border-radius: 10px; overflow: hidden; margin: 10px 0; }
         .progress-fill { height: 100%; background: #28a745; transition: width 0.3s; }
+        .button-group { display: flex; gap: 10px; align-items: center; }
     </style>
 </head>
 <body>
 <div class="container">
     <h1>📊 Motion Bulk Test Submitter</h1>
-    <button id="startBtn" class="btn">▶ Start Bulk Submission</button>
+    <div class="button-group">
+        <button id="startBtn" class="btn">▶ Start Bulk Submission</button>
+        <button id="resetBtn" class="btn btn-danger">🗑 Reset Job</button>
+    </div>
     <div class="stats" id="stats">
         <span>Total: <b id="totalCount">0</b></span>
         <span>✅ Success: <b id="successCount">0</b></span>
@@ -55,6 +60,7 @@
 </div>
 <script>
     const startBtn = document.getElementById('startBtn');
+    const resetBtn = document.getElementById('resetBtn');
     const statusBody = document.getElementById('statusBody');
     const logContainer = document.getElementById('logContainer');
     const totalCount = document.getElementById('totalCount');
@@ -63,7 +69,8 @@
     const processingCount = document.getElementById('processingCount');
     const progressFill = document.getElementById('progressFill');
 
-    // Status color map
+    let eventSource = null;
+
     const statusClass = {
         'pending': 'status-pending',
         'processing': 'status-processing',
@@ -108,15 +115,16 @@
     }
 
     function startEventSource() {
-        const eventSource = new EventSource('/logs');
+        if (eventSource) {
+            eventSource.close();
+        }
+        eventSource = new EventSource('/logs');
         eventSource.onmessage = function(event) {
             try {
                 const data = JSON.parse(event.data);
                 if (data.heartbeat) return;
                 if (data.type === 'status_update') {
-                    // Fetch full status update
                     fetchStatus();
-                    // Also add a log if there's a message
                     if (data.status) {
                         const msg = `${data.name} (${data.user_id}) → ${data.status}`;
                         addLog(data.status === 'success' ? 'success' : data.status === 'failed' ? 'error' : 'info', msg, data.time);
@@ -124,16 +132,14 @@
                 } else if (data.type === 'log') {
                     addLog(data.level, data.message, data.time);
                 } else {
-                    // fallback
                     addLog('info', event.data, '');
                 }
             } catch(e) {
-                // Probably plain text
                 addLog('info', event.data, '');
             }
         };
         eventSource.onerror = function() {
-            console.log('SSE connection closed, reconnecting...');
+            console.log('SSE connection lost, reconnecting...');
             setTimeout(() => {
                 if (eventSource.readyState === EventSource.CLOSED) {
                     startEventSource();
@@ -156,7 +162,6 @@
             .then(data => {
                 if (data.status === 'started') {
                     logContainer.innerHTML = '';
-                    // Clear status table
                     statusBody.innerHTML = '';
                     fetchStatus();
                     startEventSource();
@@ -170,8 +175,33 @@
             .finally(() => startBtn.disabled = false);
     });
 
+    resetBtn.addEventListener('click', function() {
+        if (!confirm('Reset job? This will clear all progress and start fresh.')) return;
+        fetch('/reset', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'reset') {
+                    logContainer.innerHTML = '';
+                    statusBody.innerHTML = '';
+                    if (eventSource) {
+                        eventSource.close();
+                        eventSource = null;
+                    }
+                    fetchStatus();
+                    alert('Job reset successfully.');
+                } else if (data.status === 'cannot_reset') {
+                    alert(data.message);
+                } else {
+                    alert('Reset failed.');
+                }
+            })
+            .catch(err => alert('Error resetting job.'));
+    });
+
     // Initial load
     fetchStatus();
+    // Automatically connect to logs for live updates if any job is running
+    startEventSource();
 </script>
 </body>
 </html>
